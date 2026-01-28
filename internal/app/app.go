@@ -1,16 +1,19 @@
 package app
 
 import (
-	"bufio"
 	"fmt"
 	"os"
+	"os/signal"
 	"sort"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"station_customer_connector/internal/database"
 
 	"github.com/joho/godotenv"
+	"github.com/peterh/liner"
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
 )
@@ -67,11 +70,11 @@ func Init() error {
 	var err error
 	EnergyDB, err = initializeEnergyDB()
 	if err != nil {
-		return err
+		fmt.Println("Error connecting to EnergyDB:", err)
 	}
 	CustomerDB, err = initializeCustomerDB()
 	if err != nil {
-		return err
+		fmt.Println("Error connecting to CustomerDB:", err)
 	}
 	return nil
 }
@@ -123,18 +126,100 @@ func initializeCustomerDB() (*gorm.DB, error) {
 	})
 }
 
+// InitializeEnergyDB initializes the EnergyDB connection (exported for retry functionality)
+func InitializeEnergyDB() (*gorm.DB, error) {
+	return initializeEnergyDB()
+}
+
+// InitializeCustomerDB initializes the CustomerDB connection (exported for retry functionality)
+func InitializeCustomerDB() (*gorm.DB, error) {
+	return initializeCustomerDB()
+}
+
 func Start() {
-	reader := bufio.NewReader(os.Stdin)
+	line := liner.NewLiner()
+	defer line.Close()
+
+	line.SetCtrlCAborts(false) // Don't abort on first Ctrl+C
+
+	// Set up tab completion for commands
+	line.SetCompleter(func(line string) (c []string) {
+		for _, cmd := range GetCommandList() {
+			if strings.HasPrefix(cmd, strings.ToLower(line)) {
+				c = append(c, cmd)
+			}
+		}
+		return
+	})
+
+	// Load command history from file if it exists
+	historyFile := os.ExpandEnv("$HOME/.station_connector_history")
+	if f, err := os.Open(historyFile); err == nil {
+		line.ReadHistory(f)
+		f.Close()
+	}
+
+	// Save history on exit
+	defer func() {
+		if f, err := os.Create(historyFile); err == nil {
+			line.WriteHistory(f)
+			f.Close()
+		}
+	}()
+
+	// Set up signal handling for double Ctrl+C detection
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGINT)
+
+	// Track last Ctrl+C time for double-tap detection
+	var lastInterrupt time.Time
+	var interruptMux sync.Mutex
+	const doubleCtrlCWindow = 2 * time.Second
+
+	// Goroutine to handle Ctrl+C signals
+	go func() {
+		for range sigChan {
+			interruptMux.Lock()
+			now := time.Now()
+			timeSinceLastInterrupt := now.Sub(lastInterrupt)
+
+			if timeSinceLastInterrupt < doubleCtrlCWindow {
+				// Double Ctrl+C detected - exit
+				interruptMux.Unlock()
+				fmt.Println("\n\nReceived second Ctrl+C, exiting...")
+				line.Close()
+				os.Exit(0)
+			} else {
+				// First Ctrl+C - liner will clear the input automatically
+				lastInterrupt = now
+				interruptMux.Unlock()
+				fmt.Println("\n^C (Input cleared. Press Ctrl+C again within 2s to exit)")
+			}
+		}
+	}()
+
 	fmt.Println("Welcome to Station Customer Connector CLI")
 	fmt.Println("Type 'help' for available commands, 'exit' to quit")
+	fmt.Println("Press Ctrl+C to clear input, press twice within 2s to exit")
+	fmt.Println("Use arrow keys for history, Tab for command completion")
 	fmt.Println()
 
 	for {
-		fmt.Print("> ")
-		input, err := reader.ReadString('\n')
+		input, err := line.Prompt("> ")
 		if err != nil {
-			fmt.Println("Error reading input:", err)
+			if err == liner.ErrPromptAborted {
+				// Ctrl+C was pressed, continue to next prompt
+				continue
+			}
+			// EOF or other error
+			fmt.Println()
 			return
+		}
+
+		// Add to history (only non-empty commands)
+		trimmedInput := strings.TrimSpace(input)
+		if trimmedInput != "" {
+			line.AppendHistory(trimmedInput)
 		}
 
 		// Clean and parse input
