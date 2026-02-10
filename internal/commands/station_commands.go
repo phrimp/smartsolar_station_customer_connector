@@ -115,6 +115,13 @@ func init() {
 		"Validate and commit all links to database",
 		"Usage: commit-links",
 	)
+
+	app.RegisterCommandWithMetadata(
+		unlinkStationCommand,
+		"unlink",
+		"Unlink a station from a customer (removes from InstallationAppendixStation)",
+		"Usage: unlink <station_index> OR unlink --station_id=<uuid>",
+	)
 }
 
 // listStationsCommand lists all stations with index, ID, name, and billing name
@@ -541,6 +548,77 @@ func commitLinksCommand(args string) error {
 	// Step 4: Clear cache
 	linkCache.Clear()
 	fmt.Println("✓ Cache cleared")
+
+	return nil
+}
+
+// unlinkStationCommand unlinks a station from a customer (removes from InstallationAppendixStation)
+func unlinkStationCommand(args string) error {
+	args = strings.TrimSpace(args)
+	if args == "" {
+		return fmt.Errorf("usage: unlink <station_index> OR unlink --station_id=<uuid>")
+	}
+
+	var stationID uuid.UUID
+	var err error
+
+	// Try to parse as index first
+	var index int
+	if _, errScan := fmt.Sscanf(args, "%d", &index); errScan == nil {
+		// Look up in cache
+		stationCacheMu.RLock()
+		station, exists := stationCache[index]
+		stationCacheMu.RUnlock()
+
+		if !exists {
+			return fmt.Errorf("station index %d not found in cache. Run 'ls-station' or 'search-station' first", index)
+		}
+		stationID = station.ID
+		fmt.Printf("Targeting station index %d: %s (%s)\n", index, station.Name, station.ID)
+	} else {
+		// Try to parse as UUID
+		// Check for --station_id= prefix
+		if strings.HasPrefix(args, "--station_id=") {
+			idStr := strings.TrimPrefix(args, "--station_id=")
+			stationID, err = uuid.Parse(idStr)
+		} else {
+			// Try to parse raw UUID
+			stationID, err = uuid.Parse(args)
+		}
+
+		if err != nil {
+			return fmt.Errorf("invalid station ID or index: %w", err)
+		}
+	}
+
+	// Verify station exists (optional, but good for feedback)
+	var station models.Station
+	if err := app.EnergyDB.First(&station, "id = ?", stationID).Error; err != nil {
+		return fmt.Errorf("station not found: %w", err)
+	}
+
+	// Check if the link exists
+	var link models.InstallationAppendixStation
+	if err := app.CustomerDB.Where("station_id = ?", stationID).First(&link).Error; err != nil {
+		return fmt.Errorf("station '%s' is not linked to any customer (or link not found)", station.Name)
+	} // FIXED: removed extra closing brace from previous edit attempt if any
+
+	// Get Appendix details for feedback
+	var appendix models.InstallationAppendix
+	if err := app.CustomerDB.First(&appendix, "id = ?", link.InstallationAppendixID).Error; err == nil {
+		// Get Customer details
+		var customer models.Customer
+		if err := app.CustomerDB.First(&customer, "id = ?", appendix.CustomerID).Error; err == nil {
+			fmt.Printf("Unlinking station '%s' from customer '%s'...\n", station.Name, customer.CompanyName)
+		}
+	}
+
+	// Delete the link
+	if err := app.CustomerDB.Delete(&link).Error; err != nil {
+		return fmt.Errorf("failed to unlink station: %w", err)
+	}
+
+	fmt.Printf("✓ Successfully unlinked station '%s' (%s)\n", station.Name, stationID)
 
 	return nil
 }
