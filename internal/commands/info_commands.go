@@ -24,7 +24,7 @@ func init() {
 
 func versionCommand(args string) error {
 	fmt.Println("Station Customer Connector CLI")
-	fmt.Println("Version: 1.5.2")
+	fmt.Println("Version: 1.6.2")
 	fmt.Println("Go Version: 1.25.6")
 	return nil
 }
