@@ -480,9 +480,8 @@ func commitLinksCommand(args string) error {
 		// Path: Customer -> Contracts -> InstallationAppendices
 		var appendices []models.InstallationAppendix
 		if err := app.CustomerDB.
-			Joins("JOIN contracts ON contracts.id = installation_appendices.contract_id").
-			Where("contracts.customer_id = ?", customerID).
-			Where("installation_appendices.status = ?", "active").
+			Joins("JOIN customers ON customers.id = installation_appendices.customer_id").
+			Where("installation_appendices.customer_id = ?", customerID).
 			Find(&appendices).Error; err != nil {
 			return fmt.Errorf("failed to query installation appendices for customer %s: %w", customerID, err)
 		}

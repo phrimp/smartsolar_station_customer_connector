@@ -199,8 +199,7 @@ type InstallationAppendix struct {
 	ProjectManagerID *uuid.UUID `gorm:"column:project_manager_id;type:uuid" json:"project_manager_id,omitempty"`
 
 	// Identification (appendix_number required for reference)
-	AppendixNumber string     `gorm:"column:appendix_number;size:50;unique;not null" json:"appendix_number"`
-	StationID      *uuid.UUID `gorm:"column:station_id;type:uuid" json:"station_id,omitempty"` // Link to external monitoring DEPRECATED
+	AppendixNumber string `gorm:"column:appendix_number;size:50;unique;not null" json:"appendix_number"`
 
 	// Site Info (RELAXED)
 	InstallationAddress *string  `gorm:"column:installation_address;type:text" json:"installation_address,omitempty"`
